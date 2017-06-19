@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #define _GNU_SOURCE
 #include "crypto/random/seed/GetEntropyRandomSeed.h"
@@ -21,7 +21,10 @@
 #include <errno.h>
 #include <sys/syscall.h>
 
-#ifndef __OPENBSD__
+#if !defined(__OPENBSD__) && \
+    (!defined(__GNU_LIBRARY__) || !defined(__GLIBC__) || \
+    !defined(__GLIBC_MINOR__) || __GLIBC__ < 2 || \
+    (__GLIBC__ == 2 && __GLIBC_MINOR__ < 25))
 static int getentropy(void *buf, size_t buflen)
 {
     int ret;

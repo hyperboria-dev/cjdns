@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "exception/Except.h"
 #include "util/platform/netdev/NetPlatform.h"
@@ -215,7 +215,7 @@ static struct ArrayList_OfSockaddr* getRoutes(uint32_t ifIndex,
         // printf("GOT ROUTE %s\n", Hex_print(rtm, rtm->rtm_msglen, tempAlloc));
         int prefix;
         if (&buf[i] < &mask[mask[0]] || mask[0] == 0) {
-            Assert_true(rtm->rtm_flags & RTF_HOST);
+            //Assert_true(rtm->rtm_flags & RTF_HOST);
             prefix = (ipv6) ? 128 : 32;
         } else {
             prefix = prefixFromWeirdBSDMask(mask, ipv6);
@@ -322,7 +322,7 @@ static void addIp6Address(const char* interfaceName,
     if (ioctl(s, SIOCAIFADDR_IN6, &in6_addreq) < 0) {
         int err = errno;
         close(s);
-        Except_throw(eh, "ioctl(SIOCAIFADDR) [%s]", strerror(err));
+        Except_throw(eh, "ioctl(SIOCAIFADDR) [%s] for [%s]", strerror(err), interfaceName);
     }
 
     Log_info(logger, "Configured IPv6 [%s/%i] for [%s]", myIp, prefixLen, interfaceName);
@@ -370,6 +370,7 @@ void NetPlatform_setMTU(const char* interfaceName,
        close(s);
        Except_throw(eh, "ioctl(SIOCSIFMTU) [%s]", strerror(err));
     }
+    close(s);
 }
 
 void NetPlatform_setRoutes(const char* ifName,

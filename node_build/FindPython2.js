@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 var nThen = require('nthen');
 var Spawn = require('child_process').spawn;
@@ -36,6 +36,13 @@ var find = module.exports.find = function (tempFile, callback) {
             py.stdout.on('data', function (dat) { console.log(dat.toString('utf8')); });
             py.on('close', function(ret) {
                 if (ret === 0) {
+                    Fs.exists(tempFile, waitFor(function (exists) {
+                        if (!exists) { return; }
+
+                        Fs.unlink(tempFile, waitFor(function (err) {
+                            if (err) { throw err; }
+                        }));
+                    }));
                     callback(undefined, python);
                     waitFor.abort();
                 } else {

@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "benc/Dict.h"
 #include "memory/Allocator.h"
@@ -22,6 +22,7 @@
 #include "benc/serialization/standard/BencMessageWriter.h"
 #include "switch/EncodingScheme.h"
 #include "util/Escape.h"
+#include "util/Defined.h"
 #include "wire/Message.h"
 #include "wire/DataHeader.h"
 #include "wire/RouteHeader.h"
@@ -77,11 +78,13 @@ static Iface_DEFUN replyMsg(struct MsgCore_pvt* mcp,
                             struct Address* src,
                             struct Message* msg)
 {
+    Log_debug(mcp->log, "Got reply from [%s]", Address_toString(src, msg->alloc)->bytes);
     String* txid = Dict_getStringC(content, "txid");
     if (!txid) {
-        Log_debug(mcp->log, "Message with no txid");
+        Log_debug(mcp->log, "DROP Message with no txid");
         return NULL;
     }
+
     struct ReplyContext* rc = Allocator_calloc(msg->alloc, sizeof(struct ReplyContext), 1);
     rc->src = src;
     rc->content = content;
@@ -128,6 +131,22 @@ static void sendMsg(struct MsgCore_pvt* mcp,
 
     // send the protocol version
     Dict_putInt(msgDict, CJDHTConstants_PROTOCOL, Version_CURRENT_PROTOCOL, allocator);
+
+    if (!Defined(SUBNODE)) {
+        String* q = Dict_getStringC(msgDict, "q");
+        String* sq = Dict_getStringC(msgDict, "sq");
+        if (q || sq) {
+            Log_debug(mcp->log, "Send query [%s] to [%s]",
+                ((q) ? q->bytes : sq->bytes),
+                Address_toString(addr, alloc)->bytes);
+            String* txid = Dict_getStringC(msgDict, "txid");
+            Assert_true(txid);
+            String* newTxid = String_newBinary(NULL, txid->len + 1, alloc);
+            Bits_memcpy(&newTxid->bytes[1], txid->bytes, txid->len);
+            newTxid->bytes[0] = '1';
+            Dict_putStringC(msgDict, "txid", newTxid, alloc);
+        }
+    }
 
     struct Message* msg = Message_new(0, 2048, alloc);
     BencMessageWriter_write(msgDict, msg, NULL);
@@ -197,7 +216,7 @@ static Iface_DEFUN queryMsg(struct MsgCore_pvt* mcp,
                             struct Address* src,
                             struct Message* msg)
 {
-    String* q = Dict_getString(content, String_CONST("q"));
+    String* q = Dict_getStringC(content, "q");
     struct QueryHandler* qh = NULL;
     for (int i = 0; i < mcp->qh->length; i++) {
         struct QueryHandler* qhx = ArrayList_OfQueryHandlers_get(mcp->qh, i);
@@ -265,24 +284,47 @@ static Iface_DEFUN incoming(struct Message* msg, struct Iface* interRouterIf)
     Dict* content = NULL;
     uint8_t* msgBytes = msg->bytes;
     int length = msg->length;
-    Log_debug(mcp->log, "Receive msg [%s] from [%s]",
-        Escape_getEscaped(msg->bytes, msg->length, msg->alloc),
-        Address_toString(&addr, msg->alloc)->bytes);
+    //Log_debug(mcp->log, "Receive msg [%s] from [%s]",
+    //    Escape_getEscaped(msg->bytes, msg->length, msg->alloc),
+    //    Address_toString(&addr, msg->alloc)->bytes);
+    //
     BencMessageReader_readNoExcept(msg, msg->alloc, &content);
     if (!content) {
         char* esc = Escape_getEscaped(msgBytes, length, msg->alloc);
-        Log_debug(mcp->log, "Malformed message [%s]", esc);
+        Log_debug(mcp->log, "DROP Malformed message [%s]", esc);
         return NULL;
     }
 
     int64_t* verP = Dict_getIntC(content, "p");
     if (!verP) {
-        Log_debug(mcp->log, "Message without version");
+        Log_debug(mcp->log, "DROP Message without version");
         return NULL;
     }
     addr.protocolVersion = *verP;
 
-    if (Dict_getString(content, String_CONST("q"))) {
+    String* q = Dict_getStringC(content, "q");
+
+    if (!Defined(SUBNODE)) {
+        String* txid = Dict_getStringC(content, "txid");
+        Assert_true(txid);
+        if (q) {
+            if (txid->bytes[0] == '0') {
+                Log_debug(mcp->log, "DROP query which begins with 0 and is for old pathfinder");
+                return NULL;
+            }
+        } else {
+            if (txid->bytes[0] != '1') {
+                Log_debug(mcp->log, "DROP reply which does not begin with 1");
+                return NULL;
+            }
+            String* newTxid = String_newBinary(NULL, txid->len - 1, msg->alloc);
+            Bits_memcpy(newTxid->bytes, &txid->bytes[1], txid->len - 1);
+            Dict_putStringC(content, "txid", newTxid, msg->alloc);
+            txid = newTxid;
+        }
+    }
+
+    if (q) {
         return queryMsg(mcp, content, &addr, msg);
     } else {
         return replyMsg(mcp, content, &addr, msg);

@@ -10,12 +10,13 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "client/AdminClient.h"
 #include "admin/angel/Core.h"
 #include "admin/angel/InterfaceWaiter.h"
 #include "client/Configurator.h"
+#include "crypto/Key.h"
 #include "benc/Dict.h"
 #include "benc/Int.h"
 #include "benc/List.h"
@@ -34,6 +35,7 @@
 #include "io/Writer.h"
 #include "memory/Allocator.h"
 #include "memory/MallocAllocator.h"
+#include "util/AddrTools.h"
 #include "util/ArchInfo.h"
 #include "util/Assert.h"
 #include "util/Base32.h"
@@ -52,34 +54,11 @@
 #include "util/version/Version.h"
 #include "net/Benchmark.h"
 
-#include "crypto_scalarmult_curve25519.h"
-
 #include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
 
 #define DEFAULT_TUN_DEV "tun0"
-
-static int genAddress(uint8_t addressOut[40],
-                      uint8_t privateKeyHexOut[65],
-                      uint8_t publicKeyBase32Out[53],
-                      struct Random* rand)
-{
-    struct Address address;
-    uint8_t privateKey[32];
-
-    for (;;) {
-        Random_bytes(rand, privateKey, 32);
-        crypto_scalarmult_curve25519_base(address.key, privateKey);
-        // Brute force for keys until one matches FC00:/8
-        if (AddressCalc_addressForPublicKey(address.ip6.bytes, address.key)) {
-            Hex_encode(privateKeyHexOut, 65, privateKey, 32);
-            Base32_encode(publicKeyBase32Out, 53, address.key, 32);
-            Address_printShortIp(addressOut, &address);
-            return 0;
-        }
-    }
-}
 
 static int genconf(struct Random* rand, bool eth)
 {
@@ -97,10 +76,16 @@ static int genconf(struct Random* rand, bool eth)
         port = Random_uint16(rand);
     }
 
+    uint8_t publicKey[32];
     uint8_t publicKeyBase32[53];
+    uint8_t ip[16];
     uint8_t address[40];
+    uint8_t privateKey[32];
     uint8_t privateKeyHex[65];
-    genAddress(address, privateKeyHex, publicKeyBase32, rand);
+    Key_gen(ip, publicKey, privateKey, rand);
+    Base32_encode(publicKeyBase32, 53, publicKey, 32);
+    Hex_encode(privateKeyHex, 65, privateKey, 32);
+    AddrTools_printIp(address, ip);
 
     printf("{\n");
     printf("    // Private key:\n"
@@ -255,6 +240,11 @@ static int genconf(struct Random* rand, bool eth)
            "    // Configuration for the router.\n"
            "    \"router\":\n"
            "    {\n"
+           "        // supernodes, if none are specified they'll be taken from your peers\n"
+           "        \"supernodes\": [\n"
+           "            //\"6743gf5tw80ExampleExampleExampleExamplevlyb23zfnuzv0.k\",\n"
+           "        ]\n"
+           "\n"
            "        // The interface which is used for connecting to the cjdns network.\n"
            "        \"interface\":\n"
            "        {\n"
@@ -398,23 +388,18 @@ static int genconf(struct Random* rand, bool eth)
            "\n"
            "    // If set to non-zero, cjdns will not fork to the background.\n"
            "    // Recommended for use in conjunction with \"logTo\":\"stdout\".\n");
-          if (Defined(win32)) {
-    printf("    \"noBackground\":1,\n");
-          }
-          else {
-    printf("    \"noBackground\":0,\n");
-          }
+           // ATTENTION: there is no trailing comma here because this is the LAST ENTRY
+           //            the next one ("pipe") is commented out. If you add something below
+           //            you must properly add the trailing comma otherwise ansuz will hunt
+           //            you and and make you pay.
+    printf("    \"noBackground\":%d\n", Defined(win32) ? 1 : 0);
     printf("\n"
            "    // Pipe file will store in this path, recommended value: /tmp (for unix),\n"
            "    // \\\\.\\pipe (for windows) \n"
            "    // /data/local/tmp (for rooted android) \n"
-           "    // /data/data/AppName (for non-root android)\n");
-          if (Defined(android)) {
-    printf("    \"pipe\":\"/data/local/tmp\",\n");
-          }
-          else if (!Defined(win32)){
-    printf("    \"pipe\":\"/tmp\",\n");
-          }
+           "    // /data/data/AppName (for non-root android)\n"
+           "    // This only needs to be specified if cjdroute's guess is incorrect\n");
+    printf("    // \"pipe\":\"%s\"\n", Pipe_PATH);
     printf("}\n");
 
     return 0;
@@ -441,7 +426,7 @@ static int usage(struct Allocator* alloc, char* appName)
            "\n"
            "Step 2:\n"
            "  Find somebody to connect to.\n"
-           "  Check out the IRC channel or http://hyperboria.net/\n"
+           "  Check out the IRC channel or https://hyperboria.net/\n"
            "  for information about how to meet new people and make connect to them.\n"
            "  Read more here: https://github.com/cjdelisle/cjdns/#2-find-a-friend\n"
            "\n"
@@ -544,18 +529,12 @@ int main(int argc, char** argv)
     struct Random* rand = Random_new(allocator, NULL, eh);
     struct EventBase* eventBase = EventBase_new(allocator);
 
-    if (argc >= 2) {
+    if (argc == 2) {
         // one argument
         if ((CString_strcmp(argv[1], "--help") == 0) || (CString_strcmp(argv[1], "-h") == 0)) {
             return usage(allocator, argv[0]);
         } else if (CString_strcmp(argv[1], "--genconf") == 0) {
-            bool eth = 1;
-            for (int i = 1; i < argc; i++) {
-                if (!CString_strcmp(argv[i], "--no-eth")) {
-                    eth = 0;
-                }
-            }
-            return genconf(rand, eth);
+            return genconf(rand, 1);
         } else if (CString_strcmp(argv[1], "--pidfile") == 0) {
             // deprecated
             fprintf(stderr, "'--pidfile' option is deprecated.\n");
@@ -582,12 +561,24 @@ int main(int argc, char** argv)
         }
     } else if (argc > 2) {
         // more than one argument?
-        fprintf(stderr, "%s: too many arguments [%s]\n", argv[0], argv[1]);
-        fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
         // because of '--pidfile $filename'?
-        if (CString_strcmp(argv[1], "--pidfile") == 0)
-        {
+        if (CString_strcmp(argv[1], "--pidfile") == 0) {
             fprintf(stderr, "\n'--pidfile' option is deprecated.\n");
+        } else if (CString_strcmp(argv[1], "--genconf") == 0) {
+            bool eth = 1;
+            for (int i = 2; i < argc; i++) {
+                if (!CString_strcmp(argv[i], "--no-eth")) {
+                    eth = 0;
+                } else {
+                    fprintf(stderr, "%s: unrecognized option '%s'\n", argv[0], argv[i]);
+                    fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
+                    return -1;
+                }
+            }
+            return genconf(rand, eth);
+        } else {
+            fprintf(stderr, "%s: too many arguments [%s]\n", argv[0], argv[1]);
+            fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
         }
         return -1;
     }
@@ -624,9 +615,9 @@ int main(int argc, char** argv)
     struct Log* logger = FileWriterLog_new(stdout, allocator);
 
     // --------------------- Get Admin  --------------------- //
-    Dict* configAdmin = Dict_getDict(&config, String_CONST("admin"));
-    String* adminPass = Dict_getString(configAdmin, String_CONST("password"));
-    String* adminBind = Dict_getString(configAdmin, String_CONST("bind"));
+    Dict* configAdmin = Dict_getDictC(&config, "admin");
+    String* adminPass = Dict_getStringC(configAdmin, "password");
+    String* adminBind = Dict_getStringC(configAdmin, "bind");
     if (!adminPass) {
         adminPass = String_newBinary(NULL, 32, allocator);
         Random_base32(rand, (uint8_t*) adminPass->bytes, 32);
@@ -649,7 +640,7 @@ int main(int argc, char** argv)
     struct Allocator* corePipeAlloc = Allocator_child(allocator);
     char corePipeName[64] = "client-core-";
     Random_base32(rand, (uint8_t*)corePipeName+CString_strlen(corePipeName), 31);
-    String* pipePath = Dict_getString(&config, String_CONST("pipe"));
+    String* pipePath = Dict_getStringC(&config, "pipe");
     if (!pipePath) {
         pipePath = String_CONST(Pipe_PATH);
     }
@@ -665,7 +656,7 @@ int main(int argc, char** argv)
     char* args[] = { "core", pipePath->bytes, corePipeName, NULL };
 
     // --------------------- Spawn Angel --------------------- //
-    String* privateKey = Dict_getString(&config, String_CONST("privateKey"));
+    String* privateKey = Dict_getStringC(&config, "privateKey");
 
     char* corePath = Process_getPath(allocator);
 
@@ -682,13 +673,13 @@ int main(int argc, char** argv)
     // --------------------- Pre-Configure Core ------------------------- //
     Dict* preConf = Dict_new(allocator);
     Dict* adminPreConf = Dict_new(allocator);
-    Dict_putDict(preConf, String_CONST("admin"), adminPreConf, allocator);
-    Dict_putString(preConf, String_CONST("privateKey"), privateKey, allocator);
-    Dict_putString(adminPreConf, String_CONST("bind"), adminBind, allocator);
-    Dict_putString(adminPreConf, String_CONST("pass"), adminPass, allocator);
-    Dict* logging = Dict_getDict(&config, String_CONST("logging"));
+    Dict_putDictC(preConf, "admin", adminPreConf, allocator);
+    Dict_putStringC(preConf, "privateKey", privateKey, allocator);
+    Dict_putStringC(adminPreConf, "bind", adminBind, allocator);
+    Dict_putStringC(adminPreConf, "pass", adminPass, allocator);
+    Dict* logging = Dict_getDictC(&config, "logging");
     if (logging) {
-        Dict_putDict(preConf, String_CONST("logging"), logging, allocator);
+        Dict_putDictC(preConf, "logging", logging, allocator);
     }
 
     struct Message* toCoreMsg = Message_new(0, 1024, allocator);
@@ -708,8 +699,8 @@ int main(int argc, char** argv)
     corePipe = NULL;
 
     // --------------------- Get Admin Addr/Port/Passwd --------------------- //
-    Dict* responseFromCoreAdmin = Dict_getDict(responseFromCore, String_CONST("admin"));
-    adminBind = Dict_getString(responseFromCoreAdmin, String_CONST("bind"));
+    Dict* responseFromCoreAdmin = Dict_getDictC(responseFromCore, "admin");
+    adminBind = Dict_getStringC(responseFromCoreAdmin, "bind");
 
     if (!adminBind) {
         Except_throw(eh, "didn't get address and port back from core");
@@ -732,7 +723,7 @@ int main(int argc, char** argv)
 
     // --------------------- noBackground ------------------------ //
 
-    int64_t* noBackground = Dict_getInt(&config, String_CONST("noBackground"));
+    int64_t* noBackground = Dict_getIntC(&config, "noBackground");
     if (forceNoBackground || (noBackground && *noBackground)) {
         Log_debug(logger, "Keeping cjdns client alive because %s",
             (forceNoBackground) ? "--nobg was specified on the command line"

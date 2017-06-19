@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "util/platform/netdev/NetPlatform.h"
 #include "exception/Except.h"
@@ -88,7 +88,7 @@ static void addIp4Address(const char* interfaceName,
     if (ioctl(s, SIOCAIFADDR, &ifaliasreq) == -1){
       int err = errno;
       close(s);
-      Except_throw(eh, "ioctl(SIOCAIFADDR) [%s]",strerror(err));
+      Except_throw(eh, "ioctl(SIOCAIFADDR) [%s] for [%s]", strerror(err), interfaceName);
     }
 
     Log_info(logger, "Configured IPv4 [%s/%s] for [%s]", myIp, myMask, interfaceName);

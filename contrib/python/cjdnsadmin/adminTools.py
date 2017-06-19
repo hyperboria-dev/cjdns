@@ -9,7 +9,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import json
@@ -96,6 +96,10 @@ def peerStats(cjdns,up=False,verbose=False,human_readable=False):
         ps = cjdns.InterfaceController_peerStats(i);
         peers = ps['peers']
         for p in peers:
+            tokens = p['addr'].split('.', 5)
+            p['version'] = tokens[0].strip('v')
+            p['switchLabel'] = '.'.join(tokens[1:5])
+            p['publicKey'] = tokens[5]
             if p['state'] == 'UNRESPONSIVE' and up:
                 continue
             allPeers.append(p)
